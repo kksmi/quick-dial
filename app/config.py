@@ -12,7 +12,7 @@ from . import keys as keymod
 from . import theme
 
 MIN_SEGMENTS = 2
-MAX_SEGMENTS = 10
+MAX_SEGMENTS = 12
 
 DIAMETER_MIN = 180
 DIAMETER_MAX = 760

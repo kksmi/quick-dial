@@ -125,6 +125,34 @@ def main():
         check("切到网页类型后变输入框", holder2.findChild(QLineEdit) is not None)
         w2.table._on_type(0, cfgmod.ACTION_KEYS)
 
+    print("== 分区顺序调整 ==")
+    w5 = settings_ui.SettingsWindow(cfgmod.default_config(), on_saved=lambda c: None)
+    w5.show()
+    app.processEvents()
+    check("表格有 5 列（含顺序列）", w5.table.columnCount() == 5, w5.table.columnCount())
+    names_before = [s["name"] for s in w5._wheel()["segments"]]
+    colors_before = [s["color"] for s in w5._wheel()["segments"]]
+
+    w5.table.move_row(0, 1)
+    segs = w5._wheel()["segments"]
+    check("下移：第 0 与第 1 互换", segs[0]["name"] == names_before[1] and segs[1]["name"] == names_before[0],
+          [s["name"] for s in segs[:2]])
+    check("颜色随分区一起移动", segs[0]["color"] == colors_before[1], segs[0]["color"])
+    check("表格行同步更新", w5.table.cellWidget(0, 1).text() == names_before[1])
+
+    w5.table.move_row(1, -1)
+    check("上移可复原", [s["name"] for s in w5._wheel()["segments"]] == names_before)
+
+    w5.table.move_row(0, -1)
+    check("首行上移不越界", [s["name"] for s in w5._wheel()["segments"]] == names_before)
+    last = len(names_before) - 1
+    w5.table.move_row(last, 1)
+    check("末行下移不越界", [s["name"] for s in w5._wheel()["segments"]] == names_before)
+
+    w5.count_spin.setValue(12)
+    check("分区上限 12", w5.table.rowCount() == 12, w5.table.rowCount())
+    check("配置同步 12 段", len(w5._wheel()["segments"]) == 12)
+
     print("== 配色 ==")
     old_color = w2._wheel()["segments"][0]["color"]
     idx = w2.theme_combo.findData("sunset")

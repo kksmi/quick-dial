@@ -65,10 +65,13 @@ class Controller(QObject):
         self._pending_wheel_cfg = None
         self._cancel_pending = False
         self._wait_ms = 0
+        self._wait_limit = 1200
 
         self.hotkey_pressed.connect(self._open_wheel)
         self.hotkey_released.connect(self._on_release)
         self.wheel_scrolled.connect(self._on_scroll)
+        self.wheel.segmentClicked.connect(self._on_segment_clicked)
+        self.wheel.dismissRequested.connect(self._on_dismiss)
 
         # 光标轮询：16ms 一帧，只在转盘打开时工作
         self._cursor_timer = QTimer(self)
@@ -112,7 +115,9 @@ class Controller(QObject):
         now = time.monotonic()
 
         # 主线程迟迟没把转盘弹出来（异常情况）时自动解除武装，避免一直吞键
-        if self._armed and not self.wheel.active and (now - self._armed_ts) > 2.0:
+        # 1 秒内主线程还没把转盘弹出来，说明状态异常（例如被其它事件打断），
+        # 自动解锁，避免后续按键被一直吞掉
+        if self._armed and not self.wheel.active and (now - self._armed_ts) > 1.0:
             self._armed = False
 
         if self._armed or self.wheel.active:
@@ -179,6 +184,7 @@ class Controller(QObject):
         wheel_cfg = self.cfg["wheels"][index]
         self._active_wheel = index
         self._cancel_pending = False
+        self._pending_action = None
         hk_label = (wheel_cfg.get("hotkey") or {}).get("label", "")
         if wheel_cfg.get("show_hint", True):
             hint = "松开 %s 执行 · Esc 取消" % hk_label if hk_label else "Esc 取消"
@@ -188,10 +194,13 @@ class Controller(QObject):
         self._cursor_timer.start()
 
     def _on_release(self):
+        cancelled = self._cancel_pending
+        # 点击过分区：转盘转为「悬停」状态，松开热键不关闭、不执行
+        if self.wheel.click_locked and not cancelled:
+            return
         self._cursor_timer.stop()
         idx = self.wheel.index
         wheel_cfg = self.wheel.wheel_config()
-        cancelled = getattr(self, "_cancel_pending", False)
         self.wheel.close_wheel()
 
         if cancelled or idx < 0 or wheel_cfg is None:
@@ -202,13 +211,54 @@ class Controller(QObject):
         self._pending_action = segments[idx].get("action") or {}
         self._pending_wheel_cfg = wheel_cfg
         self._wait_ms = 0
+        self._wait_limit = 1200
         self._wait_timer.start()
+
+    # ------------------------------------------------------------ 鼠标点击
+    def _on_segment_clicked(self, idx):
+        """点击分区：立即执行，并把转盘锁定为悬停状态，可连续点按。"""
+        wheel_cfg = self.wheel.wheel_config()
+        if wheel_cfg is None:
+            return
+        segments = wheel_cfg.get("segments") or []
+        if not (0 <= idx < len(segments)):
+            return
+        self.wheel.lock_open()
+        self.wheel.update()
+
+        action = segments[idx].get("action") or {}
+        # 只有"发送按键"会被按住的修饰键污染，需要等松手；
+        # 打开程序/网页/媒体键不受影响，立即执行才跟手。
+        if action.get("type") != cfgmod.ACTION_KEYS:
+            self._pending_action = None
+            self._wait_timer.stop()
+            ok, err = actions.execute(action)
+            if not ok and self.tray:
+                self.tray.showMessage("快捷转盘", err, QSystemTrayIcon.Warning, 2600)
+            return
+
+        self._pending_action = action
+        self._pending_wheel_cfg = wheel_cfg
+        self._wait_ms = 0
+        self._wait_limit = 600
+        self._wait_timer.start()
+
+    def _on_dismiss(self):
+        """点击中心圆 / 转盘外：取消并关闭。"""
+        self._cancel_pending = True
+        # 关键：点击关闭时热键可能仍按着，必须清掉"已武装"状态，
+        # 否则松开前再按热键会被当成"转盘还开着"而吞掉，表现为呼不出来。
+        self._armed = False
+        self._cursor_timer.stop()
+        self.wheel.close_wheel()
+        self._pending_action = None
+        self._wait_timer.stop()
 
     def _wait_tick(self):
         """等用户松开修饰键后再发按键，否则组合键会被污染。"""
         self._wait_ms += 20
         ctrl, alt, shift, win = native.modifier_state()
-        if (ctrl or alt or shift or win) and self._wait_ms < 1200:
+        if (ctrl or alt or shift or win) and self._wait_ms < self._wait_limit:
             return
         self._wait_timer.stop()
         action = self._pending_action

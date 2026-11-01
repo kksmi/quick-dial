@@ -117,7 +117,7 @@ def test_config():
     cfgmod.resize_segments(w, 10)
     check("扩到 10 段", len(w["segments"]) == 10)
     cfgmod.resize_segments(w, 99)
-    check("超上限被夹到 10", len(w["segments"]) == 10)
+    check("超上限被夹到 12", len(w["segments"]) == 12, len(w["segments"]))
 
     # 读写往返
     import tempfile
@@ -190,6 +190,31 @@ def test_selection(app):
     d = w.radius() * 0.8
     check("10 块：正上方 -> 0", pick(0, -d) == 0)
     check("10 块：正右 -> 2 或 3", pick(d, 0) in (2, 3), pick(d, 0))
+    w.finish_close()
+
+    # 点击命中判定（窗口内坐标）：中心圆 / 扇区 / 圆外
+    w.open_wheel(cfgmod.make_wheel(count=8), anchor_x=400, anchor_y=400)
+    app.processEvents()
+    cw, ch = w.width() / 2.0, w.height() / 2.0
+    r = w.radius()
+    check("点击正中心 -> 取消(-2)", w.hit_test(cw, ch) == -2, w.hit_test(cw, ch))
+    check("点击上方扇区 -> 0", w.hit_test(cw, ch - r * 0.7) == 0, w.hit_test(cw, ch - r * 0.7))
+    check("点击右侧扇区 -> 2", w.hit_test(cw + r * 0.7, ch) == 2, w.hit_test(cw + r * 0.7, ch))
+    check("点击左下扇区 -> 5",
+          w.hit_test(cw - r * 0.5, ch + r * 0.5) == 5, w.hit_test(cw - r * 0.5, ch + r * 0.5))
+    check("点击圆外 -> -1", w.hit_test(2, 2) == -1, w.hit_test(2, 2))
+    w.finish_close()
+
+    # 12 个分区的边界
+    w12 = cfgmod.make_wheel(count=12)
+    w12["diameter"] = 400
+    w.open_wheel(w12, anchor_x=400, anchor_y=400)
+    app.processEvents()
+    cw, ch = w.width() / 2.0, w.height() / 2.0
+    r = w.radius()
+    check("12 块可打开", len(w12["segments"]) == 12)
+    check("12 块：正上方点击 -> 0", w.hit_test(cw, ch - r * 0.7) == 0)
+    check("12 块：正右点击 -> 3", w.hit_test(cw + r * 0.7, ch) == 3, w.hit_test(cw + r * 0.7, ch))
     w.finish_close()
     w.deleteLater()
 
@@ -277,7 +302,9 @@ def test_hooks():
         up.ki.dwFlags = 2
         ctypes.windll.user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT))
         time.sleep(0.15)
-        check("注入按键被过滤（不会误触发热键）", len(seen) == 0, seen)
+        # 只关心注入的 F24 是否被过滤；同时可能有真实按键经过，不影响结论
+        injected = [e for e in seen if e[0] == 0x87]
+        check("注入按键被过滤（不会误触发热键）", len(injected) == 0, injected)
         hooks.stop()
         check("钩子可正常卸载", not hooks.alive)
 

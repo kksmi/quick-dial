@@ -160,7 +160,8 @@ def draw_wheel(
         tx = ox + math.sin(rad) * r_mid
         ty = oy - math.cos(rad) * r_mid
         avail_w = 2.0 * r_mid * math.sin(math.radians(span_deg / 2.0)) - 12.0
-        size = min(radius * (0.115 if n <= 6 else 0.10), 22.0)
+        factor = 0.115 if n <= 6 else (0.10 if n <= 9 else 0.092)
+        size = min(radius * factor, 22.0)
         font = _fit_font(painter, label, avail_w, size, bold=lift > 0.5)
         painter.setFont(font)
         text_color.setAlpha(int(235 + 20 * lift))
@@ -185,7 +186,7 @@ def draw_wheel(
             sub = dict(cfgmod.MEDIA_ACTIONS).get(action.get("value"), "")
         elif action.get("type") == cfgmod.ACTION_LAUNCH:
             sub = "打开"
-        if sub and detailed and radius >= 110:
+        if sub and detailed and radius >= 110 and n < 10:
             sf = QFont(FONT_FAMILY)
             sf.setPixelSize(max(8, int(size * 0.62)))
             painter.setFont(sf)
@@ -275,12 +276,18 @@ def draw_wheel(
 class RadialWheel(QWidget):
     """屏幕上实际出现的转盘窗口。
 
-    - 鼠标穿透：窗口不拦截鼠标，光标外观不变，也不会把下面的窗口失焦；
-    - 选中靠主程序轮询光标位置 / 全局滚轮钩子驱动，因此窗口无需接收输入。
+    交互模型：
+    - 按住热键期间：主程序轮询光标位置更新选中项，松开热键执行；
+    - 鼠标点击分区：立即执行该动作，并「锁定」转盘保持显示，可连续点按多个分区；
+    - 点击中心圆或转盘外：取消并关闭；
+    - 窗口不抢焦点（DoesNotAcceptFocus + ShowWithoutActivating），
+      所以弹出时前台程序不会失焦、输入法状态也不受影响。
     """
 
     committed = Signal(int)
     cancelled = Signal()
+    segmentClicked = Signal(int)  # 点击了某个分区，参数为分区序号
+    dismissRequested = Signal()   # 点击中心 / 转盘外，请求关闭
 
     def __init__(self, parent=None):
         super().__init__(
@@ -288,12 +295,11 @@ class RadialWheel(QWidget):
             Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
             | Qt.Tool
-            | Qt.WindowTransparentForInput
+            | Qt.WindowDoesNotAcceptFocus
             | Qt.NoDropShadowWindowHint,
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setFocusPolicy(Qt.NoFocus)
 
         self._wheel = None
@@ -301,8 +307,11 @@ class RadialWheel(QWidget):
         self._lifts = []
         self._fade = 0.0
         self._hint = ""
+        self._base_hint = ""
         self._closing = False
         self._active = False
+        self._click_locked = False
+        self.setCursor(Qt.ArrowCursor)
 
         self._timer = QTimer(self)
         self._timer.setInterval(16)
@@ -316,6 +325,15 @@ class RadialWheel(QWidget):
     @property
     def index(self):
         return self._index
+
+    @property
+    def click_locked(self):
+        """用户点过分区：松开热键时保持悬停，不自动关闭。"""
+        return self._click_locked
+
+    def lock_open(self):
+        self._click_locked = True
+        self._hint = "已锁定 · 点击中心关闭"
 
     def radius(self):
         """实际半径：按窗口尺寸反推，屏幕边缘自动缩小时角度计算依然正确。"""
@@ -337,6 +355,8 @@ class RadialWheel(QWidget):
         self._lifts = [0.0] * n
         self._closing = False
         self._active = True
+        self._click_locked = False
+        self._base_hint = hint
         self._hint = hint
 
         diameter = float(wheel.get("diameter", cfgmod.DIAMETER_DEFAULT))
@@ -401,6 +421,45 @@ class RadialWheel(QWidget):
         self.hide()
         self._wheel = None
         self._index = -1
+        self._click_locked = False
+
+    # ------------------------------------------------------------ 鼠标点击
+    def hit_test(self, x, y):
+        """返回命中结果：>=0 分区序号；-1 转盘外；-2 中心圆。"""
+        if not self._wheel:
+            return -1
+        n = len(self._wheel.get("segments") or [])
+        if n == 0:
+            return -1
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        dx = x - cx
+        dy = y - cy
+        dist = math.hypot(dx, dy)
+        radius = self.radius()
+        if radius <= 1:
+            return -1
+        if dist <= radius * 0.315 * 0.94:
+            return -2  # 中心圆
+        if dist > radius * 1.10:
+            return -1  # 圆外
+        theta = math.degrees(math.atan2(dx, -dy)) % 360.0
+        span = 360.0 / n
+        return int(((theta + span / 2.0) % 360.0) // span) % n
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton or not self._active:
+            super().mousePressEvent(event)
+            return
+        pos = event.position()
+        idx = self.hit_test(pos.x(), pos.y())
+        if idx >= 0:
+            self.set_index(idx)
+            self.segmentClicked.emit(idx)
+        else:
+            # 中心圆（-2）或转盘外（-1）都视为取消关闭
+            self.dismissRequested.emit()
+        event.accept()
 
     # ------------------------------------------------------------ 选中
     def set_index(self, idx):

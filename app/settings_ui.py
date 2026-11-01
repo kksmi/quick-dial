@@ -152,15 +152,15 @@ class ColorButton(QPushButton):
 
 
 class SegmentTable(QTableWidget):
-    """扇区编辑表格：颜色 / 名称 / 动作类型 / 动作内容。"""
+    """扇区编辑表格：颜色 / 名称 / 动作类型 / 动作内容 / 顺序。"""
 
     changed = Signal()
     recordingChanged = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setColumnCount(4)
-        self.setHorizontalHeaderLabels(["颜色", "名称", "触发动作", "内容 / 快捷键"])
+        self.setColumnCount(5)
+        self.setHorizontalHeaderLabels(["颜色", "名称", "触发动作", "内容 / 快捷键", "顺序"])
         self.verticalHeader().setVisible(False)
         self.setSelectionMode(QAbstractItemView.NoSelection)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -172,9 +172,11 @@ class SegmentTable(QTableWidget):
         header.setSectionResizeMode(1, QHeaderView.Fixed)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
         header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
         self.setColumnWidth(0, 56)
-        self.setColumnWidth(1, 116)
-        self.setColumnWidth(2, 132)
+        self.setColumnWidth(1, 108)
+        self.setColumnWidth(2, 136)
+        self.setColumnWidth(4, 58)
         self._wheel = None
         self._loading = False
 
@@ -219,6 +221,54 @@ class SegmentTable(QTableWidget):
         self.setCellWidget(row, 2, type_combo)
 
         self._set_value_widget(row, action.get("type"), action.get("value") or "")
+        self._build_order_cell(row)
+
+    def _build_order_cell(self, row):
+        """顺序列：上移 / 下移，整个分区（名称+动作+颜色）一起换位。"""
+        total = len(self._wheel.get("segments") or []) if self._wheel else 0
+        wrap = QWidget()
+        lay = QHBoxLayout(wrap)
+        lay.setContentsMargins(3, 0, 3, 0)
+        lay.setSpacing(1)
+
+        up = QToolButton()
+        up.setText("↑")
+        up.setToolTip("上移一位")
+        up.setCursor(Qt.PointingHandCursor)
+        up.setEnabled(row > 0)
+        up.clicked.connect(lambda _=False, r=row: self.move_row(r, -1))
+
+        down = QToolButton()
+        down.setText("↓")
+        down.setToolTip("下移一位")
+        down.setCursor(Qt.PointingHandCursor)
+        down.setEnabled(row < total - 1)
+        down.clicked.connect(lambda _=False, r=row: self.move_row(r, 1))
+
+        style = (
+            "QToolButton { border: 1px solid #E3E8F2; border-radius: 6px; color: #55637A;"
+            " background: #FAFBFE; font-size: 13px; font-weight: 600; padding: 0px; }"
+            "QToolButton:hover { background: #E7EFFE; border-color: #B9CDF2; color: #4F7DF3; }"
+            "QToolButton:pressed { background: #DCE8FF; }"
+            "QToolButton:disabled { color: #D6DCE7; border-color: #EFF2F7; background: #FCFDFF; }"
+        )
+        for btn in (up, down):
+            btn.setFixedSize(24, 24)
+            btn.setStyleSheet(style)
+        lay.addWidget(up)
+        lay.addWidget(down)
+        self.setCellWidget(row, 4, wrap)
+
+    def move_row(self, row, delta):
+        if not self._wheel:
+            return
+        segs = self._wheel.get("segments") or []
+        target = row + delta
+        if not (0 <= row < len(segs)) or not (0 <= target < len(segs)):
+            return
+        segs[row], segs[target] = segs[target], segs[row]
+        self.load(self._wheel)
+        self._notify()
 
     def _set_value_widget(self, row, atype, value):
         holder = QWidget()
