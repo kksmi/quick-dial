@@ -231,6 +231,11 @@ def test_render():
 # ------------------------------------------------------------------ 钩子
 def test_hooks():
     section("全局钩子")
+    if os.environ.get("QUICKDIAL_SKIP_HOOKS") == "1":
+        print("  已跳过（无桌面会话的环境无法安装全局钩子）")
+        x, y = native.get_cursor_pos()
+        check("可获取光标位置", isinstance(x, int) and isinstance(y, int), (x, y))
+        return
     seen = []
 
     def on_key(vk, down):

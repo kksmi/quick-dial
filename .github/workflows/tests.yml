@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6-Essentials
+
+      - name: 逻辑自测（按键映射 / 配置容错 / 角度选中 / 渲染）
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QUICKDIAL_SKIP_HOOKS: "1"
+        run: python tests/selftest.py
+
+      - name: 界面逻辑（标签页 / 扇区 / 按键录制 / 冲突检测）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tests/ui_test.py

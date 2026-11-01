@@ -1,0 +1,33 @@
+name: build-exe
+
+# 手动触发，或推送 v* 标签时自动打包
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6-Essentials pyinstaller
+
+      - name: 打包单文件 EXE
+        run: python build.py
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickDial-windows-x64
+          path: dist/*.exe
+          if-no-files-found: error
