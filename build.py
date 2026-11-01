@@ -12,6 +12,14 @@ import shutil
 import subprocess
 import sys
 
+# 统一 UTF-8 输出：Windows 默认控制台编码可能是 cp1252/gbk，打印中文会直接抛异常
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 NAME = "快捷转盘"
 ICON = os.path.join(ROOT, "assets", "app.ico")
